@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import SessionTimeout from "@/components/SessionTimeout";
+import { AppShell } from "@/components/AppShell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,9 +29,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-950 text-slate-100">
-        {/* Logs the user out after SESSION_INACTIVITY_TIMEOUT_MINUTES of inactivity. */}
-        <SessionTimeout>{children}</SessionTimeout>
+      <body className="min-h-full bg-slate-950 text-slate-100">
+        {/* AppShell renders the sidebar/header + session timeout on protected
+            routes, and renders public routes (login, unauthorized) bare. */}
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

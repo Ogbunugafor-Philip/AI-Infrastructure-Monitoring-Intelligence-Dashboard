@@ -32,6 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { withAuth } from "@/lib/withAuth";
 
 const statusVariant: Record<Server["status"], "online" | "offline" | "warning"> = {
   online: "online",
@@ -39,7 +40,7 @@ const statusVariant: Record<Server["status"], "online" | "offline" | "warning"> 
   warning: "warning",
 };
 
-export default function ServersPage() {
+function ServersPage() {
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,3 +249,5 @@ export default function ServersPage() {
     </main>
   );
 }
+
+export default withAuth(ServersPage, ["admin", "super_admin"]);

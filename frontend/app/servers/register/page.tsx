@@ -4,8 +4,9 @@ import Link from "next/link";
 import { ArrowLeft, ServerCog } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ServerForm } from "@/components/ServerForm";
+import { withAuth } from "@/lib/withAuth";
 
-export default function RegisterServerPage() {
+function RegisterServerPage() {
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-10">
       <Link
@@ -31,3 +32,5 @@ export default function RegisterServerPage() {
     </main>
   );
 }
+
+export default withAuth(RegisterServerPage, ["admin", "super_admin"]);

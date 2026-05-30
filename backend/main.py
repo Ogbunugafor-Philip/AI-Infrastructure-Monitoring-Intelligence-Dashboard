@@ -23,6 +23,8 @@ from slowapi.middleware import SlowAPIMiddleware
 from config import settings
 from middleware.rate_limit import limiter
 from routers import auth as auth_router
+from routers import dashboard as dashboard_router
+from routers import metrics as metrics_router
 from routers import servers as servers_router
 from utils.security_check import verify_required_env
 
@@ -76,6 +78,8 @@ app.add_middleware(
 # --- Routers ---
 app.include_router(auth_router.router)
 app.include_router(servers_router.router)
+app.include_router(dashboard_router.router)
+app.include_router(metrics_router.router)
 
 
 @app.get("/health", tags=["health"])

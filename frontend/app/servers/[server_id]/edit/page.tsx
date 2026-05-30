@@ -7,8 +7,9 @@ import { type Server, errorMessage, getServer } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { ServerForm } from "@/components/ServerForm";
+import { withAuth } from "@/lib/withAuth";
 
-export default function EditServerPage({
+function EditServerPage({
   params,
 }: {
   params: Promise<{ server_id: string }>;
@@ -55,3 +56,5 @@ export default function EditServerPage({
     </main>
   );
 }
+
+export default withAuth(EditServerPage, ["admin", "super_admin"]);

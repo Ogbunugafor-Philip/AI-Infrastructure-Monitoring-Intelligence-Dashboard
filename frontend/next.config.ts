@@ -30,10 +30,14 @@ const env = loadRootEnv();
 const BACKEND_HOST = env.BACKEND_HOST || "127.0.0.1";
 const BACKEND_PORT = env.BACKEND_PORT || "8002";
 const APP_URL = (env.APP_URL || "").trim();
+// The browser talks to the API via NEXT_PUBLIC_API_URL (set in .env.local).
+const NEXT_PUBLIC_API_URL = (process.env.NEXT_PUBLIC_API_URL || APP_URL || "").trim();
 
-// Local backend origin (used in development) + production app origin from .env.
+// Local backend origin (used in development) + the public API URL.
 const BACKEND_LOCAL = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
-const connectSources = ["'self'", BACKEND_LOCAL, APP_URL].filter(Boolean).join(" ");
+const connectSources = ["'self'", BACKEND_LOCAL, NEXT_PUBLIC_API_URL, APP_URL]
+  .filter(Boolean)
+  .join(" ");
 
 // Content-Security-Policy as specified in the project requirements.
 const cspDirectives = [

@@ -37,6 +37,7 @@ from schemas.auth import (
     PasswordVerifyRequest,
     RefreshRequest,
     TokenResponse,
+    UserOut,
 )
 from services import audit_service, intrusion_detection
 from utils.security import (
@@ -176,6 +177,12 @@ async def refresh(
         description="Refresh token rotated.",
     )
     return await _issue_token_pair(db, user)
+
+
+@router.get("/me", response_model=UserOut)
+async def me(current_user: User = Depends(get_current_user)) -> UserOut:
+    """Return the authenticated user's profile (for the header / RBAC UI)."""
+    return UserOut.model_validate(current_user)
 
 
 @router.post("/verify-password", response_model=MessageResponse)

@@ -14,11 +14,13 @@ if the attempt raises. Decrypted secrets are never logged.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import socket
 import stat
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import paramiko
@@ -143,3 +145,45 @@ def _run_test(params: SSHConnectionParams) -> ConnectionResult:
 async def test_connection(params: SSHConnectionParams) -> ConnectionResult:
     """Async wrapper — runs the blocking Paramiko logic in a worker thread."""
     return await asyncio.to_thread(_run_test, params)
+
+
+@contextlib.contextmanager
+def open_ssh_client(params: SSHConnectionParams) -> Iterator[paramiko.SSHClient]:
+    """
+    Yield a connected Paramiko client (blocking). Honours key-only mode, writes
+    key material to a 0600 temp file, and ALWAYS closes the client and removes
+    the temp key on exit — even if the body raises.
+    """
+    if params.key_only_mode and params.auth_method == SSHAuthMethod.password:
+        raise PermissionError("Password authentication is disabled (key-only mode).")
+
+    key_path: str | None = None
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        connect_kwargs = dict(
+            hostname=params.host,
+            port=params.port,
+            username=params.username,
+            timeout=settings.SSH_CONNECTION_TIMEOUT,
+            banner_timeout=settings.SSH_CONNECTION_TIMEOUT,
+            auth_timeout=settings.SSH_CONNECTION_TIMEOUT,
+            look_for_keys=False,
+            allow_agent=False,
+        )
+        if params.auth_method == SSHAuthMethod.password:
+            connect_kwargs["password"] = params.password
+        else:
+            if not params.private_key:
+                raise ValueError("No SSH key available for key auth.")
+            key_path = _write_temp_key(params.private_key)
+            connect_kwargs["key_filename"] = key_path
+        client.connect(**connect_kwargs)
+        yield client
+    finally:
+        client.close()
+        if key_path:
+            try:
+                os.remove(key_path)
+            except OSError:
+                pass

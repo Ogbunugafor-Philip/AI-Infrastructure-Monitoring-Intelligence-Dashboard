@@ -23,6 +23,33 @@ api.interceptors.request.use((cfg) => {
   return cfg;
 });
 
+// Global response handling:
+//  - 401: clear tokens and redirect to /login
+//  - 403: redirect to /unauthorized
+// The /auth/verify-password call opts out (403 there is an expected outcome).
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (typeof window !== "undefined" && error?.response) {
+      const status = error.response.status;
+      const url: string = error.config?.url ?? "";
+      const optOut = url.includes("/auth/verify-password");
+      if (status === 401) {
+        Cookies.remove("access_token");
+        Cookies.remove("refresh_token");
+        if (!window.location.pathname.startsWith("/login")) {
+          window.location.href = "/login";
+        }
+      } else if (status === 403 && !optOut) {
+        if (!window.location.pathname.startsWith("/unauthorized")) {
+          window.location.href = "/unauthorized";
+        }
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;
@@ -150,6 +177,213 @@ export async function revealCredentials(
     dashboard_password: dashboardPassword,
   });
   return data;
+}
+
+// --------------------------------------------------------------------------- //
+// Dashboard & metrics types                                                   //
+// --------------------------------------------------------------------------- //
+export interface Overview {
+  total_servers: number;
+  servers_online: number;
+  servers_offline: number;
+  servers_warning: number;
+  avg_cpu_usage: number;
+  avg_ram_usage: number;
+  avg_disk_usage: number;
+  security_alerts_24h: number;
+  audit_events_24h: number;
+}
+
+export interface ServerStatusItem {
+  id: string;
+  name: string;
+  ip_address: string;
+  ssh_port: number;
+  ssh_username: string;
+  ssh_auth_method: AuthMethod;
+  ssh_key_only_mode: boolean;
+  status: ServerStatus;
+  cpu_usage: number | null;
+  ram_usage: number | null;
+  disk_usage: number | null;
+  uptime: string | null;
+  last_updated: string | null;
+}
+
+export type Severity = "high" | "medium" | "low";
+
+export interface SecurityAlert {
+  id: string;
+  event_type: string;
+  event_description: string | null;
+  ip_address: string | null;
+  user_id: string | null;
+  target_server_id: string | null;
+  success: boolean;
+  severity: Severity;
+  created_at: string;
+}
+
+export interface AuditLogItem {
+  id: string;
+  user_id: string | null;
+  event_type: string;
+  event_description: string | null;
+  ip_address: string | null;
+  target_server_id: string | null;
+  success: boolean;
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLogItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface ProcessInfo {
+  name: string;
+  pid: number | string;
+  cpu: number | null;
+  memory: number | null;
+  status: string;
+}
+
+export interface PortInfo {
+  port: number | string;
+  protocol: string;
+  service: string;
+  state: string;
+  process: string;
+}
+
+export interface Metric {
+  id: string;
+  server_id: string;
+  cpu_usage: number | null;
+  ram_usage: number | null;
+  disk_usage: number | null;
+  uptime: string | null;
+  running_processes: ProcessInfo[] | null;
+  open_ports: PortInfo[] | null;
+  network_stats: Record<string, number> | null;
+  collected_at: string;
+}
+
+export interface MetricHistoryPoint {
+  collected_at: string;
+  cpu_usage: number | null;
+  ram_usage: number | null;
+  disk_usage: number | null;
+}
+
+export interface MetricHistory {
+  server_id: string;
+  hours: number;
+  points: MetricHistoryPoint[];
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: "super_admin" | "admin" | "viewer";
+  is_active: boolean;
+}
+
+export async function getMe(): Promise<UserProfile> {
+  const { data } = await api.get<UserProfile>("/auth/me");
+  return data;
+}
+
+export async function getOverview(): Promise<Overview> {
+  const { data } = await api.get<Overview>("/dashboard/overview");
+  return data;
+}
+
+export async function getServersStatus(): Promise<ServerStatusItem[]> {
+  const { data } = await api.get<ServerStatusItem[]>("/dashboard/servers/status");
+  return data;
+}
+
+export async function getSecurityAlerts(limit = 50): Promise<SecurityAlert[]> {
+  const { data } = await api.get<SecurityAlert[]>(`/dashboard/security-alerts?limit=${limit}`);
+  return data;
+}
+
+export interface AuditLogQuery {
+  page?: number;
+  page_size?: number;
+  event_type?: string;
+  date_from?: string;
+  date_to?: string;
+  user_id?: string;
+  server_id?: string;
+}
+
+export async function getAuditLogs(query: AuditLogQuery): Promise<AuditLogPage> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") params.set(k, String(v));
+  });
+  const { data } = await api.get<AuditLogPage>(`/dashboard/audit-logs?${params.toString()}`);
+  return data;
+}
+
+/** Download the audit-log CSV export through the authenticated axios client. */
+export async function downloadAuditCsv(query: AuditLogQuery = {}): Promise<void> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") params.set(k, String(v));
+  });
+  const response = await api.get(`/dashboard/audit-logs/export?${params.toString()}`, {
+    responseType: "blob",
+  });
+  const url = window.URL.createObjectURL(new Blob([response.data], { type: "text/csv" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `audit_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+export async function getLatestMetric(serverId: string): Promise<Metric | null> {
+  const { data } = await api.get<Metric | null>(`/metrics/${serverId}/latest`);
+  return data;
+}
+
+export async function getMetricHistory(serverId: string, hours = 24): Promise<MetricHistory> {
+  const { data } = await api.get<MetricHistory>(`/metrics/${serverId}/history?hours=${hours}`);
+  return data;
+}
+
+export async function refreshMetrics(
+  serverId: string,
+): Promise<{ success: boolean; message: string; metric: Metric | null }> {
+  const { data } = await api.post(`/metrics/${serverId}/refresh`, {});
+  return data;
+}
+
+/** Refresh the session by rotating the refresh token ("Stay Logged In"). */
+export async function refreshSession(): Promise<boolean> {
+  const refresh = Cookies.get("refresh_token");
+  if (!refresh) return false;
+  try {
+    const { data } = await api.post<TokenResponse>("/auth/refresh", { refresh_token: refresh });
+    Cookies.set("access_token", data.access_token, {
+      secure: true,
+      sameSite: "strict",
+      expires: data.expires_in / 86400,
+    });
+    Cookies.set("refresh_token", data.refresh_token, { secure: true, sameSite: "strict" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Verify the current user's dashboard password (used as a reveal gate). */
