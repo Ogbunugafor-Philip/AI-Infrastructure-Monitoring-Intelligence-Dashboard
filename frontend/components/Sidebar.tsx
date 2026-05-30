@@ -11,6 +11,7 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  Terminal,
 } from "lucide-react";
 import { type Role } from "@/lib/useAuth";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["viewer", "admin", "super_admin"] },
   { href: "/servers", label: "Servers", icon: ServerCog, roles: ["admin", "super_admin"] },
   { href: "/metrics", label: "Metrics", icon: Activity, roles: ["viewer", "admin", "super_admin"] },
+  { href: "/actions", label: "Actions", icon: Terminal, roles: ["admin", "super_admin"] },
   { href: "/ai-reports", label: "AI Reports", icon: BrainCircuit, roles: ["viewer", "admin", "super_admin"] },
   { href: "/audit-logs", label: "Audit Logs", icon: ScrollText, roles: ["super_admin"] },
   { href: "/security-alerts", label: "Security Alerts", icon: ShieldAlert, roles: ["admin", "super_admin"] },

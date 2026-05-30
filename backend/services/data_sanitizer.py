@@ -99,3 +99,18 @@ async def sanitize_logs(
     sanitized = _walk(raw_logs, "logs", redacted_fields)
     await _audit_redactions(db, server_id, redacted_fields)
     return sanitized
+
+
+async def sanitize_text(
+    text: str,
+    *,
+    db: AsyncSession | None = None,
+    server_id: uuid.UUID | str | None = None,
+) -> str:
+    """Sanitize a single block of text (e.g. command output) before store/return."""
+    if not isinstance(text, str):
+        return text
+    redacted_fields: list[str] = []
+    sanitized = _walk(text, "output", redacted_fields)
+    await _audit_redactions(db, server_id, redacted_fields)
+    return sanitized if isinstance(sanitized, str) else text

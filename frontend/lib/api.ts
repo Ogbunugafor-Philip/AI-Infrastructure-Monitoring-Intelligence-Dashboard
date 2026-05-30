@@ -457,6 +457,160 @@ export async function refreshSession(): Promise<boolean> {
   }
 }
 
+// --------------------------------------------------------------------------- //
+// Privileged actions                                                          //
+// --------------------------------------------------------------------------- //
+export type RiskLevel = "low" | "medium" | "high";
+export type ActionStatus =
+  | "pending"
+  | "awaiting_second_confirmation"
+  | "approved"
+  | "executing"
+  | "completed"
+  | "cancelled"
+  | "expired";
+
+export interface CommandItem {
+  command_key: string;
+  description: string;
+  risk_level: RiskLevel;
+  command_string: string;
+}
+
+export interface CommandCatalog {
+  low: CommandItem[];
+  medium: CommandItem[];
+  high: CommandItem[];
+}
+
+export interface ActionRecord {
+  id: string;
+  server_id: string;
+  server_ip: string | null;
+  server_name: string | null;
+  requested_by_user_id: string | null;
+  confirmed_by_user_id: string | null;
+  command_key: string;
+  command_string: string;
+  risk_level: RiskLevel;
+  status: ActionStatus;
+  dry_run_output: string | null;
+  execution_output: string | null;
+  password_verified: boolean;
+  second_confirmation_required: boolean;
+  second_confirmation_received: boolean;
+  time_lock_expires_at: string | null;
+  executed_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface DryRunResult {
+  server_ip: string;
+  command_key: string;
+  exact_command_string: string;
+  output: string;
+  executed_at: string;
+}
+
+export interface ActionHistoryPage {
+  items: ActionRecord[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface EmergencyKillResult {
+  server_id: string;
+  credentials_revoked: boolean;
+  actions_cancelled: number;
+  connections_terminated: number;
+  status: string;
+  message: string;
+}
+
+export async function getCommands(): Promise<CommandCatalog> {
+  const { data } = await api.get<CommandCatalog>("/actions/commands");
+  return data;
+}
+
+export async function dryRunCommand(serverId: string, commandKey: string): Promise<DryRunResult> {
+  const { data } = await api.post<DryRunResult>("/actions/dry-run", {
+    server_id: serverId,
+    command_key: commandKey,
+  });
+  return data;
+}
+
+export async function requestAction(serverId: string, commandKey: string): Promise<ActionRecord> {
+  const { data } = await api.post<ActionRecord>("/actions/request", {
+    server_id: serverId,
+    command_key: commandKey,
+  });
+  return data;
+}
+
+export async function verifyActionPassword(actionId: string, password: string): Promise<ActionRecord> {
+  const { data } = await api.post<ActionRecord>(`/actions/${actionId}/verify-password`, {
+    dashboard_password: password,
+  });
+  return data;
+}
+
+export async function secondConfirmAction(actionId: string): Promise<ActionRecord> {
+  const { data } = await api.post<ActionRecord>(`/actions/${actionId}/second-confirm`, {});
+  return data;
+}
+
+export async function cancelAction(actionId: string): Promise<ActionRecord> {
+  const { data } = await api.post<ActionRecord>(`/actions/${actionId}/cancel`, {});
+  return data;
+}
+
+export async function executeAction(actionId: string): Promise<ActionRecord> {
+  const { data } = await api.post<ActionRecord>(`/actions/${actionId}/execute`, {});
+  return data;
+}
+
+export async function getActionStatus(actionId: string): Promise<ActionRecord> {
+  const { data } = await api.get<ActionRecord>(`/actions/${actionId}/status`);
+  return data;
+}
+
+export async function getAwaitingConfirmation(): Promise<ActionRecord[]> {
+  const { data } = await api.get<ActionRecord[]>("/actions/awaiting-confirmation");
+  return data;
+}
+
+export interface ActionHistoryQuery {
+  page?: number;
+  page_size?: number;
+  server_id?: string;
+  status?: string;
+  risk_level?: string;
+  user_id?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
+export async function getActionHistory(query: ActionHistoryQuery = {}): Promise<ActionHistoryPage> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") params.set(k, String(v));
+  });
+  const { data } = await api.get<ActionHistoryPage>(`/actions/history?${params.toString()}`);
+  return data;
+}
+
+export async function emergencyKill(serverId: string, password: string): Promise<EmergencyKillResult> {
+  const { data } = await api.post<EmergencyKillResult>(`/servers/${serverId}/emergency-kill`, {
+    dashboard_password: password,
+  });
+  return data;
+}
+
 /** Verify the current user's dashboard password (used as a reveal gate). */
 export async function verifyPassword(password: string): Promise<boolean> {
   try {

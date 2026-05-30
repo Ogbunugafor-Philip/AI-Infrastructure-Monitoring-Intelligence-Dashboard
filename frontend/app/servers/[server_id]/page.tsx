@@ -23,7 +23,10 @@ import {
   waitForTask,
 } from "@/lib/api";
 import { withAuth } from "@/lib/withAuth";
+import { useAuth } from "@/lib/useAuth";
 import { AIReportPanel } from "@/components/AIReportPanel";
+import { QuickActionsPanel } from "@/components/actions/QuickActionsPanel";
+import { EmergencyKillButton } from "@/components/actions/EmergencyKillButton";
 import { timeAgo, formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,6 +59,7 @@ function buildSeries(history: MetricHistory | null, field: "cpu_usage" | "ram_us
 
 function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }) {
   const { server_id } = use(params);
+  const { hasRole } = useAuth();
   const [server, setServer] = useState<Server | null>(null);
   const [metric, setMetric] = useState<Metric | null>(null);
   const [history, setHistory] = useState<MetricHistory | null>(null);
@@ -292,6 +296,21 @@ function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }
 
         <AIReportPanel serverId={server_id} />
       </div>
+
+      {/* Quick actions (admin+) */}
+      {hasRole("admin", "super_admin") && (
+        <QuickActionsPanel serverId={server_id} serverName={server.name} serverIp={server.ip_address} />
+      )}
+
+      {/* Danger Zone — emergency kill switch (super_admin only) */}
+      {hasRole("super_admin") && (
+        <EmergencyKillButton
+          serverId={server_id}
+          serverName={server.name}
+          serverIp={server.ip_address}
+          onKilled={load}
+        />
+      )}
     </div>
   );
 }

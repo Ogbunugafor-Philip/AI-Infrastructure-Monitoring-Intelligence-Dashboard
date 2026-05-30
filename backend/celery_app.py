@@ -12,7 +12,7 @@ celery_app = Celery(
     "ai_infra",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["tasks.metric_tasks"],
+    include=["tasks.metric_tasks", "tasks.action_tasks"],
 )
 
 celery_app.conf.update(

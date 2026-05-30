@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -33,9 +33,12 @@ from database import get_db
 from middleware.ip_whitelist import enforce_ip_whitelist
 from middleware.rbac import require_admin, require_super_admin, require_viewer
 from models.audit_log import AuditLog
-from models.enums import SSHAuthMethod
+from models.enums import ActionStatus, ServerStatus, SSHAuthMethod
+from models.pending_action import PendingAction
 from models.server import Server
 from models.user import User
+from schemas.action import EmergencyKillResponse, PasswordBody
+from services import action_email_service, connection_registry
 from schemas.server import (
     MessageResponse,
     RevealCredentialsRequest,
@@ -426,3 +429,79 @@ async def reveal_credentials(
     )
     await db.commit()
     return RevealCredentialsResponse(auth_method=server.ssh_auth_method, credential=credential)
+
+
+EMERGENCY_KILL_EVENT = "emergency_kill"
+
+
+@router.post("/{server_id}/emergency-kill", response_model=EmergencyKillResponse)
+async def emergency_kill(
+    request: Request,
+    server_id: uuid.UUID,
+    payload: PasswordBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_super_admin),  # super_admin only
+) -> EmergencyKillResponse:
+    """
+    Emergency kill switch — irreversibly revokes a server's stored SSH
+    credentials, marks it offline, cancels its pending/approved actions, and
+    force-closes any tracked SSH connections. Requires password re-verification.
+    """
+    ip = _client_ip(request)
+    server = await _get_server_or_404(db, server_id)
+
+    if not verify_password(payload.dashboard_password, current_user.hashed_password):
+        await audit_service.record_event(
+            db, event_type=EMERGENCY_KILL_EVENT, success=False,
+            user_id=current_user.id, ip_address=ip, target_server_id=server.id,
+            description="Emergency kill rejected: password verification failed.",
+        )
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password verification failed")
+
+    # 1) Revoke credentials + mark offline.
+    server.encrypted_ssh_password = None
+    server.encrypted_ssh_key = None
+    server.status = ServerStatus.offline
+
+    # 2) Cancel all pending/approved actions for this server.
+    cancel_result = await db.execute(
+        update(PendingAction)
+        .where(
+            PendingAction.server_id == server.id,
+            PendingAction.status.in_([
+                ActionStatus.pending,
+                ActionStatus.awaiting_second_confirmation,
+                ActionStatus.approved,
+            ]),
+        )
+        .values(status=ActionStatus.cancelled)
+    )
+    actions_cancelled = cancel_result.rowcount or 0
+
+    # 3) Force-close any tracked SSH connections to this server.
+    connections_terminated = connection_registry.close_all(str(server.id))
+
+    await audit_service.record_event(
+        db, event_type=EMERGENCY_KILL_EVENT, success=True,
+        user_id=current_user.id, ip_address=ip, target_server_id=server.id,
+        description=(
+            f"EMERGENCY KILL on {server.name} ({server.ip_address}) by {current_user.email}: "
+            f"credentials revoked, {actions_cancelled} action(s) cancelled, "
+            f"{connections_terminated} connection(s) terminated."
+        ),
+    )
+    await db.commit()
+
+    await action_email_service.notify_emergency_kill(
+        triggered_by=current_user.email, server=server, cancelled_actions=actions_cancelled,
+    )
+
+    return EmergencyKillResponse(
+        server_id=server.id,
+        credentials_revoked=True,
+        actions_cancelled=actions_cancelled,
+        connections_terminated=connections_terminated,
+        status="offline",
+        message="SSH credentials revoked and all pending actions cancelled. This cannot be undone.",
+    )

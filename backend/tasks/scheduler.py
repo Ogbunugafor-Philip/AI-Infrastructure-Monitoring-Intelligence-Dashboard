@@ -17,6 +17,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from config import settings
+from tasks.action_tasks import expire_pending_actions_task
 from tasks.metric_tasks import run_retention_cleanup_task, scan_all_servers_task
 
 logger = logging.getLogger("ai_infra.scheduler")
@@ -32,6 +33,10 @@ def _dispatch_scan_all() -> None:
 def _dispatch_retention() -> None:
     run_retention_cleanup_task.delay()
     logger.info("Dispatched scheduled retention cleanup task")
+
+
+def _dispatch_expire_actions() -> None:
+    expire_pending_actions_task.delay()
 
 
 def start_scheduler() -> None:
@@ -53,9 +58,18 @@ def start_scheduler() -> None:
         coalesce=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        _dispatch_expire_actions,
+        IntervalTrigger(seconds=60),  # expire stale pending actions every 60s
+        id="expire_pending_actions",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
     logger.info(
-        "Scheduler started: scan every %dh, retention daily at 03:00 UTC",
+        "Scheduler started: scan every %dh, retention daily at 03:00 UTC, "
+        "expire-actions every 60s",
         settings.SCHEDULER_REPORT_INTERVAL_HOURS,
     )
 

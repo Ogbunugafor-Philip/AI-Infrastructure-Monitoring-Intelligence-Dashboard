@@ -5,9 +5,17 @@ Alembic autogenerate and ``create_all`` see the full schema.
 """
 from models.ai_report import AIReport
 from models.audit_log import AuditLog
-from models.enums import ReportType, ServerStatus, SSHAuthMethod, UserRole
+from models.enums import (
+    ActionStatus,
+    ReportType,
+    RiskLevel,
+    ServerStatus,
+    SSHAuthMethod,
+    UserRole,
+)
 from models.log import Log
 from models.metric import Metric
+from models.pending_action import PendingAction
 from models.rate_limit import RateLimitTracking
 from models.refresh_token import RefreshToken
 from models.server import Server
@@ -18,11 +26,14 @@ __all__ = [
     "AuditLog",
     "Log",
     "Metric",
+    "PendingAction",
     "RateLimitTracking",
     "RefreshToken",
     "Server",
     "User",
+    "ActionStatus",
     "ReportType",
+    "RiskLevel",
     "ServerStatus",
     "SSHAuthMethod",
     "UserRole",

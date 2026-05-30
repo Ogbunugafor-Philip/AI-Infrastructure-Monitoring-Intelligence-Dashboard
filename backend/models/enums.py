@@ -22,3 +22,19 @@ class SSHAuthMethod(str, enum.Enum):
 class ReportType(str, enum.Enum):
     scheduled = "scheduled"
     manual = "manual"
+
+
+class RiskLevel(str, enum.Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+class ActionStatus(str, enum.Enum):
+    pending = "pending"
+    awaiting_second_confirmation = "awaiting_second_confirmation"
+    approved = "approved"
+    executing = "executing"
+    completed = "completed"
+    cancelled = "cancelled"
+    expired = "expired"
