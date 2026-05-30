@@ -18,6 +18,7 @@ from models.metric import Metric
 from models.pending_action import PendingAction
 from models.rate_limit import RateLimitTracking
 from models.refresh_token import RefreshToken
+from models.security_scan import SecurityScan
 from models.server import Server
 from models.user import User
 
@@ -29,6 +30,7 @@ __all__ = [
     "PendingAction",
     "RateLimitTracking",
     "RefreshToken",
+    "SecurityScan",
     "Server",
     "User",
     "ActionStatus",

@@ -21,7 +21,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+import re
+
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -31,6 +33,7 @@ from middleware.rbac import get_current_user
 from models.refresh_token import RefreshToken
 from models.user import User
 from schemas.auth import (
+    ChangePasswordRequest,
     LoginRequest,
     LogoutRequest,
     MessageResponse,
@@ -185,6 +188,59 @@ async def me(current_user: User = Depends(get_current_user)) -> UserOut:
     return UserOut.model_validate(current_user)
 
 
+_PW_RULES = (
+    (lambda p: len(p) >= 8, "at least 8 characters"),
+    (lambda p: bool(re.search(r"[A-Z]", p)), "an uppercase letter"),
+    (lambda p: bool(re.search(r"[0-9]", p)), "a number"),
+    (lambda p: bool(re.search(r"[^A-Za-z0-9]", p)), "a special character"),
+)
+
+
+@router.post("/change-password", response_model=MessageResponse)
+async def change_password(
+    request: Request,
+    payload: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MessageResponse:
+    """
+    Change the authenticated user's password: verify current password, enforce
+    complexity, rehash, clear force_password_change, revoke all refresh tokens,
+    and audit.
+    """
+    ip = _client_ip(request)
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        await audit_service.record_event(
+            db, event_type="password_change", success=False, user_id=current_user.id,
+            ip_address=ip, description="Password change failed: current password incorrect.",
+        )
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Current password is incorrect")
+
+    failed = [msg for rule, msg in _PW_RULES if not rule(payload.new_password)]
+    if failed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="New password must contain " + ", ".join(failed) + ".",
+        )
+    if verify_password(payload.new_password, current_user.hashed_password):
+        raise HTTPException(status_code=422, detail="New password must differ from the current password.")
+
+    current_user.hashed_password = hash_password(payload.new_password)
+    current_user.force_password_change = False
+    # Invalidate all existing refresh tokens for this user.
+    await db.execute(
+        update(RefreshToken).where(RefreshToken.user_id == current_user.id, RefreshToken.revoked.is_(False))
+        .values(revoked=True)
+    )
+    await audit_service.record_event(
+        db, event_type="password_change", success=True, user_id=current_user.id, ip_address=ip,
+        description="Password changed successfully; all refresh tokens revoked.",
+    )
+    await db.commit()
+    return MessageResponse(message="Password changed successfully")
+
+
 @router.post("/verify-password", response_model=MessageResponse)
 async def verify_current_password(
     request: Request,
@@ -256,6 +312,7 @@ async def _issue_token_pair(db: AsyncSession, user: User) -> TokenResponse:
         access_token=access,
         refresh_token=raw_refresh,
         expires_in=_access_ttl_seconds(),
+        force_password_change=bool(user.force_password_change),
     )
 
 

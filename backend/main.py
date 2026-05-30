@@ -97,6 +97,7 @@ app.include_router(dashboard_router.router)
 app.include_router(metrics_router.router)
 app.include_router(ai_reports_router.router)
 app.include_router(actions_router.router)
+app.include_router(actions_router.scan_router)
 
 
 @app.get("/health", tags=["health"])

@@ -56,6 +56,7 @@ async def _run(email: str, password: str) -> None:
             existing.is_active = True
             existing.is_locked = False
             existing.failed_login_attempts = 0
+            existing.force_password_change = True
             action = "updated existing user to super_admin"
         else:
             db.add(User(
@@ -64,6 +65,7 @@ async def _run(email: str, password: str) -> None:
                 hashed_password=hashed,
                 role=UserRole.super_admin,
                 is_active=True,
+                force_password_change=True,
             ))
             action = "created new super_admin user"
         await db.commit()

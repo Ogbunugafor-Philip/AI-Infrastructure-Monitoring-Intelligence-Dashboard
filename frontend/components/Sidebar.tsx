@@ -23,16 +23,18 @@ interface NavItem {
   roles: Role[];
 }
 
-// Navigation definition. Items are REMOVED from the DOM for roles not listed.
+const ALL: Role[] = ["viewer", "admin", "super_admin"];
+
+// Items are REMOVED from the DOM for roles not listed.
 const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["viewer", "admin", "super_admin"] },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ALL },
   { href: "/servers", label: "Servers", icon: ServerCog, roles: ["admin", "super_admin"] },
-  { href: "/metrics", label: "Metrics", icon: Activity, roles: ["viewer", "admin", "super_admin"] },
+  { href: "/metrics", label: "Metrics", icon: Activity, roles: ALL },
   { href: "/actions", label: "Actions", icon: Terminal, roles: ["admin", "super_admin"] },
-  { href: "/ai-reports", label: "AI Reports", icon: BrainCircuit, roles: ["viewer", "admin", "super_admin"] },
+  { href: "/ai-reports", label: "AI Reports", icon: BrainCircuit, roles: ALL },
   { href: "/audit-logs", label: "Audit Logs", icon: ScrollText, roles: ["super_admin"] },
   { href: "/security-alerts", label: "Security Alerts", icon: ShieldAlert, roles: ["admin", "super_admin"] },
-  { href: "/settings", label: "Settings", icon: Settings, roles: ["super_admin"] },
+  { href: "/settings", label: "Settings", icon: Settings, roles: ALL },
 ];
 
 export function Sidebar({ role }: { role: Role }) {
@@ -40,12 +42,12 @@ export function Sidebar({ role }: { role: Role }) {
   const items = NAV.filter((item) => item.roles.includes(role));
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-800 bg-slate-950 md:flex">
-      <div className="flex h-16 items-center gap-2 border-b border-slate-800 px-5">
-        <ShieldCheck className="h-6 w-6 text-indigo-400" />
-        <span className="text-sm font-semibold leading-tight">
+    <aside className="hidden w-64 shrink-0 flex-col border-r border-[#2d3748] bg-[#131625] md:flex">
+      <div className="flex h-16 items-center gap-2 border-b border-[#2d3748] px-5">
+        <ShieldCheck className="h-6 w-6 text-[#3b82f6]" />
+        <span className="text-sm font-semibold leading-tight text-white">
           AI Infra<br />
-          <span className="text-slate-400">Monitoring</span>
+          <span className="text-[#94a3b8]">Monitor</span>
         </span>
       </div>
       <nav className="flex-1 space-y-1 p-3">
@@ -58,8 +60,8 @@ export function Sidebar({ role }: { role: Role }) {
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                 active
-                  ? "bg-indigo-600/20 text-indigo-300"
-                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-200",
+                  ? "bg-[#3b82f6]/10 text-[#3b82f6] underline decoration-2 underline-offset-4"
+                  : "text-[#94a3b8] hover:bg-[#1e2235] hover:text-white",
               )}
             >
               <Icon className="h-4 w-4" />
@@ -68,7 +70,7 @@ export function Sidebar({ role }: { role: Role }) {
           );
         })}
       </nav>
-      <div className="border-t border-slate-800 p-4 text-xs text-slate-600">
+      <div className="border-t border-[#2d3748] p-4 text-xs text-[#64748b]">
         Secured • RBAC • Audited
       </div>
     </aside>

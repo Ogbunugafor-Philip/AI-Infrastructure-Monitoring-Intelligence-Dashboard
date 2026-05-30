@@ -23,6 +23,7 @@ from database import get_db
 from middleware.rbac import require_admin, require_viewer
 from models.enums import ActionStatus, RiskLevel, UserRole
 from models.pending_action import PendingAction
+from models.security_scan import SecurityScan
 from models.server import Server
 from models.user import User
 from schemas.action import (
@@ -34,9 +35,15 @@ from schemas.action import (
     DryRunResponse,
     PasswordBody,
 )
+from schemas.security_scan import (
+    SecurityScanHistoryItem,
+    SecurityScanHistoryPage,
+    SecurityScanOut,
+)
 from services import action_email_service, audit_service
 from services.action_executor import execute_command
 from services.data_sanitizer import sanitize_text
+from services.vulnerability_scanner import scan_server
 from utils.command_whitelist import (
     CommandNotWhitelistedError,
     get_catalog,
@@ -46,6 +53,10 @@ from utils.command_whitelist import (
 from utils.security import verify_password
 
 router = APIRouter(prefix="/api/v1/actions", tags=["actions"])
+
+# Security-scan endpoints live under /api/v1/servers (path per spec) but are
+# defined here alongside the action logic they relate to.
+scan_router = APIRouter(prefix="/api/v1/servers", tags=["security-scan"])
 
 ACTION_EXPIRY_MINUTES = 10
 TIME_LOCK_SECONDS = 60
@@ -451,5 +462,90 @@ async def action_history(
     total_pages = (total + page_size - 1) // page_size
     return ActionHistoryPage(
         items=[ActionOut.from_model(r, servers.get(r.server_id)) for r in rows],
+        total=total, page=page, page_size=page_size, total_pages=total_pages,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Security scan (/api/v1/servers/{server_id}/security-scan)                    #
+# --------------------------------------------------------------------------- #
+@scan_router.post("/{server_id}/security-scan", response_model=SecurityScanOut)
+async def run_security_scan(
+    request: Request,
+    server_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),  # privileged (runs SSH commands)
+) -> SecurityScanOut:
+    server = (await db.execute(select(Server).where(Server.id == server_id))).scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    try:
+        result = await scan_server(db, server_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Scan failed ({type(exc).__name__})")
+
+    scan = SecurityScan(
+        server_id=server.id,
+        scan_results=result["results"],
+        total_checks=result["total_checks"],
+        passed=result["passed"],
+        warnings=result["warnings"],
+        critical_findings=result["critical_findings"],
+        overall_score=result["overall_score"],
+        scanned_by_user_id=current_user.id,
+    )
+    db.add(scan)
+    await audit_service.record_event(
+        db, event_type="security_scan", success=True,
+        user_id=current_user.id, ip_address=_client_ip(request), target_server_id=server.id,
+        description=(
+            f"Security scan on {server.ip_address}: score {result['overall_score']}/100, "
+            f"{result['passed']} pass / {result['warnings']} warn / {result['critical_findings']} critical."
+        ),
+    )
+    await db.commit()
+    await db.refresh(scan)
+    return SecurityScanOut.model_validate(scan)
+
+
+@scan_router.get("/{server_id}/security-scan/latest", response_model=SecurityScanOut | None)
+async def latest_security_scan(
+    server_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_viewer),
+) -> SecurityScanOut | None:
+    scan = (
+        await db.execute(
+            select(SecurityScan).where(SecurityScan.server_id == server_id)
+            .order_by(SecurityScan.scanned_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    return SecurityScanOut.model_validate(scan) if scan else None
+
+
+@scan_router.get("/{server_id}/security-scan/history", response_model=SecurityScanHistoryPage)
+async def security_scan_history(
+    server_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_viewer),
+) -> SecurityScanHistoryPage:
+    total = (
+        await db.execute(
+            select(func.count()).select_from(SecurityScan).where(SecurityScan.server_id == server_id)
+        )
+    ).scalar_one()
+    rows = (
+        await db.execute(
+            select(SecurityScan).where(SecurityScan.server_id == server_id)
+            .order_by(SecurityScan.scanned_at.desc())
+            .offset((page - 1) * page_size).limit(page_size)
+        )
+    ).scalars().all()
+    total_pages = (total + page_size - 1) // page_size
+    return SecurityScanHistoryPage(
+        items=[SecurityScanHistoryItem.model_validate(r) for r in rows],
         total=total, page=page, page_size=page_size, total_pages=total_pages,
     )

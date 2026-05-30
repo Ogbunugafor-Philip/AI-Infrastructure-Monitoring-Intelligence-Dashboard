@@ -41,7 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {user && <Sidebar role={user.role} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <Header user={user} />
-        <main className="flex-1 overflow-y-auto bg-slate-950">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-[#0f1117]">{children}</main>
       </div>
       <SessionTimeoutModal />
     </div>

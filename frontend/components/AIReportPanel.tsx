@@ -1,40 +1,79 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BrainCircuit, CheckCircle2, Loader2, RefreshCw, ShieldAlert, Zap } from "lucide-react";
+import {
+  Activity,
+  BrainCircuit,
+  Loader2,
+  PlayCircle,
+  RefreshCw,
+  ShieldAlert,
+} from "lucide-react";
 import {
   type AiReport,
+  type CommandCatalog,
+  type CommandItem,
+  executeAction,
   generateAiReport,
+  getCommands,
   getLatestAiReport,
+  requestAction,
+  verifyActionPassword,
   waitForTask,
 } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { riskColor } from "@/lib/gauge-color";
+import { findingBulletColor, matchRecommendation } from "@/lib/commandMatch";
 import { formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/EmptyState";
 import { Skeleton } from "@/components/Skeletons";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { PasswordPromptDialog } from "@/components/PasswordPromptDialog";
+import { ActionRequestModal } from "@/components/actions/ActionRequestModal";
 
-function List({ items, icon }: { items: string[] | null; icon?: React.ReactNode }) {
-  if (!items || items.length === 0) return <p className="text-sm text-slate-500">None.</p>;
+function riskLabel(level: string | null, score: number | null): string {
+  if (level) return level.toUpperCase();
+  if (score === null) return "UNKNOWN";
+  return score >= 7 ? "CRITICAL" : score >= 4 ? "WARNING" : "HEALTHY";
+}
+
+function Heading({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <ul className="space-y-1.5">
-      {items.map((it, i) => (
-        <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
-          <span className="mt-0.5 shrink-0 text-slate-500">{icon ?? <CheckCircle2 className="h-4 w-4" />}</span>
-          <span>{it}</span>
-        </li>
-      ))}
-    </ul>
+    <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-white">
+      {icon}
+      {children}
+    </h3>
   );
 }
 
-export function AIReportPanel({ serverId }: { serverId: string }) {
+export function AIReportPanel({
+  serverId,
+  serverName = "",
+  serverIp = "",
+}: {
+  serverId: string;
+  serverName?: string;
+  serverIp?: string;
+}) {
   const { hasRole } = useAuth();
   const canGenerate = hasRole("admin", "super_admin");
   const [report, setReport] = useState<AiReport | null>(null);
+  const [catalog, setCatalog] = useState<CommandCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+
+  // Execute-related modal state
+  const [execCmd, setExecCmd] = useState<CommandItem | null>(null);
+  const [manualText, setManualText] = useState<string | null>(null);
+  const [runAllOpen, setRunAllOpen] = useState(false);
+  const [runResult, setRunResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -46,6 +85,7 @@ export function AIReportPanel({ serverId }: { serverId: string }) {
 
   useEffect(() => {
     load();
+    getCommands().then(setCatalog).catch(() => setCatalog({ low: [], medium: [], high: [] }));
   }, [load]);
 
   async function handleGenerate() {
@@ -59,13 +99,48 @@ export function AIReportPanel({ serverId }: { serverId: string }) {
     }
   }
 
+  function onExecuteRec(recText: string) {
+    const match = catalog ? matchRecommendation(recText, catalog) : null;
+    if (match) setExecCmd(match);
+    else setManualText(recText);
+  }
+
+  // Low-risk recommendations that map to a whitelisted command.
+  const recs: string[] = report?.recommended_actions ?? [];
+  const safeCommands: CommandItem[] = catalog
+    ? recs
+        .map((r) => matchRecommendation(r, catalog))
+        .filter((c): c is CommandItem => !!c && c.risk_level === "low")
+    : [];
+
+  async function runAllSafe(password: string): Promise<true | string> {
+    let ran = 0;
+    for (const cmd of safeCommands) {
+      try {
+        const action = await requestAction(serverId, cmd.command_key);
+        await verifyActionPassword(action.id, password);
+        await executeAction(action.id);
+        ran += 1;
+      } catch (err) {
+        if (typeof err === "object" && err && "response" in err) {
+          const st = (err as { response?: { status?: number } }).response?.status;
+          if (st === 403) return "Password verification failed.";
+        }
+        // skip this one, continue
+      }
+    }
+    setRunResult(`Executed ${ran} of ${safeCommands.length} safe action(s).`);
+    return true;
+  }
+
   const score = report?.risk_score ?? null;
+  const color = riskColor(score ?? 5);
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+    <section className="rounded-2xl border border-[#2d3748] bg-[#1a1d2e] p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-lg font-semibold">
-          <BrainCircuit className="h-5 w-5 text-indigo-400" /> AI Analysis
+        <h2 className="flex items-center gap-2 text-lg font-bold text-white">
+          <BrainCircuit className="h-5 w-5 text-[#3b82f6]" /> AI Analysis
         </h2>
         {canGenerate && (
           <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating}>
@@ -77,7 +152,7 @@ export function AIReportPanel({ serverId }: { serverId: string }) {
 
       {loading ? (
         <div className="space-y-3">
-          <Skeleton className="h-20 w-32" />
+          <Skeleton className="h-24 w-40" />
           <Skeleton className="h-16 w-full" />
         </div>
       ) : !report ? (
@@ -85,61 +160,139 @@ export function AIReportPanel({ serverId }: { serverId: string }) {
           title="No AI analysis yet"
           description={canGenerate ? "Generate a report to see AI insights." : "No report has been generated yet."}
           icon={<BrainCircuit className="h-6 w-6" />}
-          action={
-            canGenerate ? (
-              <Button size="sm" onClick={handleGenerate} disabled={generating}>
-                {generating && <Loader2 className="h-4 w-4 animate-spin" />} Generate Report
-              </Button>
-            ) : undefined
-          }
+          action={canGenerate ? <Button size="sm" onClick={handleGenerate} disabled={generating}>{generating && <Loader2 className="h-4 w-4 animate-spin" />} Generate Report</Button> : undefined}
         />
       ) : (
-        <div className="space-y-5">
-          <div className="flex items-center gap-4">
-            <div className="text-center">
-              <div className="text-5xl font-bold" style={{ color: riskColor(score ?? 5) }}>
-                {score ?? "—"}
-              </div>
-              <div className="text-xs text-slate-400">Risk Score /10</div>
+        <div className="space-y-6">
+          {/* RISK SCORE */}
+          <div className="flex flex-col items-center rounded-xl border border-[#2d3748] bg-[#131625] p-5">
+            <div className="text-6xl font-extrabold" style={{ color }}>{score ?? "—"}</div>
+            <div className="mt-1 text-sm font-bold tracking-wide" style={{ color }}>
+              {riskLabel(report.risk_level, score)}
             </div>
-            <div>
-              <div
-                className="inline-block rounded-md px-2 py-0.5 text-xs font-semibold"
-                style={{ background: `${riskColor(score ?? 5)}22`, color: riskColor(score ?? 5) }}
-              >
-                {(report.risk_level ?? "unknown").toUpperCase()}
-              </div>
-              <p className="mt-1 text-xs text-slate-500">
-                Generated {formatDateTime(report.generated_at)}
-              </p>
+            <div className="mt-3 h-2.5 w-full max-w-xs overflow-hidden rounded-full bg-[#2d3748]">
+              <div className="h-full rounded-full" style={{ width: `${((score ?? 0) / 10) * 100}%`, background: color }} />
             </div>
+            <div className="mt-1 text-xs text-[#64748b]">Risk score {score ?? "—"} / 10 · generated {formatDateTime(report.generated_at)}</div>
           </div>
 
+          {/* SUMMARY */}
           <div>
-            <h3 className="mb-1 text-sm font-semibold text-slate-200">Summary</h3>
-            <p className="text-sm leading-relaxed text-slate-300">{report.summary}</p>
+            <Heading>Summary</Heading>
+            <p className="text-sm text-[#e2e8f0]" style={{ lineHeight: 1.6 }}>{report.summary}</p>
           </div>
 
-          <div className="grid gap-5 sm:grid-cols-2">
+          {/* KEY FINDINGS */}
+          {report.key_findings && report.key_findings.length > 0 && (
             <div>
-              <h3 className="mb-2 text-sm font-semibold text-slate-200">Key Findings</h3>
-              <List items={report.key_findings} icon={<Zap className="h-4 w-4 text-amber-400" />} />
+              <Heading>Key Findings</Heading>
+              <ul className="space-y-2">
+                {report.key_findings.map((f, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-sm text-[#e2e8f0]">
+                    <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: findingBulletColor(f) }} />
+                    <span>{f}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
+
+          {/* SECURITY OBSERVATIONS */}
+          {report.security_observations && report.security_observations.length > 0 && (
             <div>
-              <h3 className="mb-2 text-sm font-semibold text-slate-200">Recommended Actions</h3>
-              <List items={report.recommended_actions} />
+              <Heading icon={<ShieldAlert className="h-4 w-4 text-[#ef4444]" />}>Security Observations</Heading>
+              <ul className="space-y-2">
+                {report.security_observations.map((o, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-sm text-[#e2e8f0]">
+                    <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" style={{ color: findingBulletColor(o) === "#22c55e" ? "#f59e0b" : findingBulletColor(o) }} />
+                    <span>{o}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
+
+          {/* PERFORMANCE */}
+          {report.performance_observations && report.performance_observations.length > 0 && (
             <div>
-              <h3 className="mb-2 text-sm font-semibold text-slate-200">Security Observations</h3>
-              <List items={report.security_observations} icon={<ShieldAlert className="h-4 w-4 text-red-400" />} />
+              <Heading icon={<Activity className="h-4 w-4 text-[#3b82f6]" />}>Performance</Heading>
+              <ul className="space-y-2">
+                {report.performance_observations.map((o, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-sm text-[#e2e8f0]">
+                    <Activity className="mt-0.5 h-4 w-4 shrink-0 text-[#3b82f6]" />
+                    <span>{o}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
+
+          {/* RECOMMENDED ACTIONS */}
+          {recs.length > 0 && (
             <div>
-              <h3 className="mb-2 text-sm font-semibold text-slate-200">Performance Observations</h3>
-              <List items={report.performance_observations} icon={<Zap className="h-4 w-4 text-indigo-400" />} />
+              <Heading>Recommended Actions</Heading>
+              <div className="space-y-2.5">
+                {recs.map((rec, i) => {
+                  const match = catalog ? matchRecommendation(rec, catalog) : null;
+                  return (
+                    <div key={i} className="flex items-center gap-3 rounded-lg border border-[#2d3748] bg-[#131625] p-3">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#3b82f6]/15 text-sm font-bold text-[#3b82f6]">{i + 1}</span>
+                      <span className="flex-1 text-sm text-[#e2e8f0]">{rec}</span>
+                      {canGenerate && (
+                        <Button size="sm" variant={match ? "default" : "outline"} onClick={() => onExecuteRec(rec)}>
+                          <PlayCircle className="h-3.5 w-3.5" /> Execute
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {canGenerate && safeCommands.length > 0 && (
+                <Button className="mt-3" variant="secondary" size="sm" onClick={() => { setRunResult(null); setRunAllOpen(true); }}>
+                  Run All Safe Actions ({safeCommands.length})
+                </Button>
+              )}
+              {runResult && <p className="mt-2 text-xs text-[#22c55e]">{runResult}</p>}
             </div>
-          </div>
+          )}
         </div>
       )}
+
+      {/* Execute a single recommendation via the Phase-5 action flow */}
+      {execCmd && (
+        <ActionRequestModal
+          open={!!execCmd}
+          onOpenChange={(o) => !o && setExecCmd(null)}
+          serverId={serverId}
+          serverName={serverName}
+          serverIp={serverIp}
+          command={execCmd}
+          requesterEmail="you"
+        />
+      )}
+
+      {/* Manual execution required */}
+      <Dialog open={manualText !== null} onOpenChange={(o) => !o && setManualText(null)}>
+        <DialogHeader>
+          <DialogTitle>Manual Action Required</DialogTitle>
+          <DialogDescription>
+            This recommendation has no matching whitelisted command and must be performed manually.
+          </DialogDescription>
+        </DialogHeader>
+        <pre className="whitespace-pre-wrap rounded-lg bg-[#131625] p-3 text-sm text-[#e2e8f0]">{manualText}</pre>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setManualText(null)}>Close</Button>
+        </DialogFooter>
+      </Dialog>
+
+      {/* Run all safe actions: one password, sequential execution */}
+      <PasswordPromptDialog
+        open={runAllOpen}
+        onOpenChange={setRunAllOpen}
+        title="Run All Safe Actions"
+        description={`Enter your password to run ${safeCommands.length} low-risk action(s) in sequence.`}
+        onConfirm={runAllSafe}
+      />
     </section>
   );
 }

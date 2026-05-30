@@ -55,11 +55,19 @@ export interface TokenResponse {
   refresh_token: string;
   token_type: string;
   expires_in: number;
+  force_password_change?: boolean;
 }
 
 export async function login(email: string, password: string): Promise<TokenResponse> {
   const { data } = await api.post<TokenResponse>("/auth/login", { email, password });
   return data;
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await api.post("/auth/change-password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
 }
 
 export async function logout(): Promise<void> {
@@ -601,6 +609,39 @@ export async function getActionHistory(query: ActionHistoryQuery = {}): Promise<
     if (v !== undefined && v !== null && v !== "") params.set(k, String(v));
   });
   const { data } = await api.get<ActionHistoryPage>(`/actions/history?${params.toString()}`);
+  return data;
+}
+
+// --- Security scan ---
+export interface ScanCheck {
+  check_key: string;
+  check_name: string;
+  status: "pass" | "warning" | "critical";
+  finding: string;
+  recommendation: string;
+  fix_command_key: string | null;
+}
+
+export interface SecurityScan {
+  id: string;
+  server_id: string;
+  scan_results: ScanCheck[] | null;
+  total_checks: number;
+  passed: number;
+  warnings: number;
+  critical_findings: number;
+  overall_score: number;
+  scanned_at: string;
+  scanned_by_user_id: string | null;
+}
+
+export async function runSecurityScan(serverId: string): Promise<SecurityScan> {
+  const { data } = await api.post<SecurityScan>(`/servers/${serverId}/security-scan`, {});
+  return data;
+}
+
+export async function getLatestSecurityScan(serverId: string): Promise<SecurityScan | null> {
+  const { data } = await api.get<SecurityScan | null>(`/servers/${serverId}/security-scan/latest`);
   return data;
 }
 

@@ -31,21 +31,24 @@ export function Header({ user }: { user: AuthUser | null }) {
   const displayName = user?.full_name || user?.email || "User";
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-800 bg-slate-950/80 px-6 backdrop-blur">
-      <div className="text-sm text-slate-500">AI Infrastructure Monitoring &amp; Intelligence</div>
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#2d3748] bg-[#131625] px-6">
+      <div className="text-sm font-semibold text-white">AI Infrastructure Monitor</div>
       <div className="flex items-center gap-4">
         {user && (
           <div className="flex items-center gap-2">
-            <UserCircle2 className="h-6 w-6 text-slate-400" />
+            <UserCircle2 className="h-6 w-6 text-[#94a3b8]" />
             <div className="hidden text-right sm:block">
-              <div className="text-sm font-medium text-slate-200">{displayName}</div>
+              <div className="text-sm font-medium text-[#e2e8f0]">{displayName}</div>
             </div>
             <Badge variant={ROLE_VARIANT[user.role]}>{ROLE_LABEL[user.role]}</Badge>
           </div>
         )}
-        <Button variant="outline" size="sm" onClick={handleLogout}>
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-1.5 rounded-lg border border-[#2d3748] px-3 py-1.5 text-sm font-medium text-[#ef4444] transition hover:bg-[#2d1515]"
+        >
           <LogOut className="h-4 w-4" /> Logout
-        </Button>
+        </button>
       </div>
     </header>
   );

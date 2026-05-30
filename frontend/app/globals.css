@@ -1,8 +1,26 @@
 @import "tailwindcss";
+@config "../tailwind.config.js";
 
+/* Complete dark color system (also mirrored in tailwind.config.js). */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --page: #0f1117;
+  --card: #1a1d2e;
+  --card-border: #2d3748;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --input-bg: #1e2235;
+  --input-border: #3b4268;
+  --label: #cbd5e1;
+  --brand: #3b82f6;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --nav-bg: #131625;
+  --nav-border: #2d3748;
+
+  --background: var(--page);
+  --foreground: var(--text-primary);
 }
 
 @theme inline {
@@ -12,15 +30,23 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--page);
+  color: var(--text-primary);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Inputs are clearly readable everywhere by default. */
+input,
+textarea,
+select {
+  color: var(--text-primary);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
 }

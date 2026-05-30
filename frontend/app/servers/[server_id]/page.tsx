@@ -41,7 +41,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { MultiServerChart } from "@/components/dashboard/MultiServerChart";
+import { ServerMetricAreaChart } from "@/components/dashboard/ServerMetricAreaChart";
+import { SecurityScanTab } from "@/components/SecurityScanTab";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ChartSkeleton, Skeleton } from "@/components/Skeletons";
@@ -52,14 +53,14 @@ const STATUS_BADGE: Record<Server["status"], "online" | "offline" | "warning"> =
   warning: "warning",
 };
 
-function buildSeries(history: MetricHistory | null, field: "cpu_usage" | "ram_usage" | "disk_usage") {
-  const rows = (history?.points ?? []).map((p) => ({ time: p.collected_at, v: p[field] }));
-  return rows;
+function metricSeries(history: MetricHistory | null, field: "cpu_usage" | "ram_usage" | "disk_usage") {
+  return (history?.points ?? []).map((p) => ({ collected_at: p.collected_at, value: p[field] }));
 }
 
 function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }) {
   const { server_id } = use(params);
   const { hasRole } = useAuth();
+  const [tab, setTab] = useState<"overview" | "scan">("overview");
   const [server, setServer] = useState<Server | null>(null);
   const [metric, setMetric] = useState<Metric | null>(null);
   const [history, setHistory] = useState<MetricHistory | null>(null);
@@ -181,6 +182,25 @@ function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }
         </Button>
       </div>
 
+      {/* Tabs */}
+      <div className="inline-flex rounded-lg border border-[#2d3748] p-1">
+        {(["overview", "scan"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium ${tab === t ? "bg-[#3b82f6] text-white" : "text-[#94a3b8] hover:text-white"}`}
+          >
+            {t === "overview" ? "Overview" : "Security Scan"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "scan" && (
+        <SecurityScanTab serverId={server_id} serverName={server.name} serverIp={server.ip_address} />
+      )}
+
+      {tab === "overview" && (
+      <>
       {/* Metric cards */}
       <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <Card><CardContent className="flex justify-center p-4"><Gauge value={metric?.cpu_usage ?? null} label="CPU" /></CardContent></Card>
@@ -193,9 +213,9 @@ function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }
 
       {/* Charts */}
       <div className="grid gap-5 lg:grid-cols-3">
-        <ErrorBoundary><MultiServerChart title="CPU — 24h" rows={buildSeries(history, "cpu_usage")} series={[{ key: "v", name: "CPU" }]} /></ErrorBoundary>
-        <ErrorBoundary><MultiServerChart title="RAM — 24h" rows={buildSeries(history, "ram_usage")} series={[{ key: "v", name: "RAM" }]} /></ErrorBoundary>
-        <ErrorBoundary><MultiServerChart title="Disk — 24h" rows={buildSeries(history, "disk_usage")} series={[{ key: "v", name: "Disk" }]} /></ErrorBoundary>
+        <ErrorBoundary><ServerMetricAreaChart title="CPU Usage — 24h" data={metricSeries(history, "cpu_usage")} color="#3b82f6" showReferenceLines /></ErrorBoundary>
+        <ErrorBoundary><ServerMetricAreaChart title="RAM Usage — 24h" data={metricSeries(history, "ram_usage")} color="#8b5cf6" showReferenceLines /></ErrorBoundary>
+        <ErrorBoundary><ServerMetricAreaChart title="Disk Usage — 24h" data={metricSeries(history, "disk_usage")} color="#22c55e" /></ErrorBoundary>
       </div>
 
       {/* Processes + Ports */}
@@ -294,7 +314,7 @@ function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }
           )}
         </section>
 
-        <AIReportPanel serverId={server_id} />
+        <AIReportPanel serverId={server_id} serverName={server.name} serverIp={server.ip_address} />
       </div>
 
       {/* Quick actions (admin+) */}
@@ -310,6 +330,8 @@ function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }
           serverIp={server.ip_address}
           onKilled={load}
         />
+      )}
+      </>
       )}
     </div>
   );
