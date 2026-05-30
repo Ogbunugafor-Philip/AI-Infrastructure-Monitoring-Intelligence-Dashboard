@@ -10,13 +10,13 @@ import {
   WifiOff,
 } from "lucide-react";
 import {
-  type Metric,
   type Overview,
   type ServerStatusItem,
   getMetricHistory,
   getOverview,
   getServersStatus,
   refreshMetrics,
+  waitForTask,
 } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { withAuth } from "@/lib/withAuth";
@@ -127,26 +127,10 @@ function DashboardPage() {
   async function handleRefresh(server: ServerStatusItem) {
     setRefreshingId(server.id);
     try {
-      const res = await refreshMetrics(server.id);
-      const m: Metric | null = res.metric;
-      if (m) {
-        setServers((prev) =>
-          (prev ?? []).map((s) =>
-            s.id === server.id
-              ? {
-                  ...s,
-                  cpu_usage: m.cpu_usage,
-                  ram_usage: m.ram_usage,
-                  disk_usage: m.disk_usage,
-                  uptime: m.uptime,
-                  last_updated: m.collected_at,
-                  status: (m.cpu_usage ?? 0) >= 80 || (m.ram_usage ?? 0) >= 80 ? "warning" : "online",
-                }
-              : s,
-          ),
-        );
-      }
-      loadCore(true);
+      // Queue a full scan (Celery) and wait for it to complete, then reload.
+      const { task_id } = await refreshMetrics(server.id);
+      await waitForTask(server.id, task_id, { timeoutMs: 90000 });
+      await loadCore(true);
     } finally {
       setRefreshingId(null);
     }

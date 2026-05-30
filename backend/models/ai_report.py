@@ -22,7 +22,11 @@ class AIReport(Base):
     )
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    risk_level: Mapped[str | None] = mapped_column(Text, nullable=True)
     recommended_actions: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
+    key_findings: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
+    security_observations: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
+    performance_observations: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     # Encrypted (AES-256-GCM) snapshot of the raw data the report was built from.
     raw_data_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(

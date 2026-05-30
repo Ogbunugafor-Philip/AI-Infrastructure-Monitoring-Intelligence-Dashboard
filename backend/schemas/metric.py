@@ -41,3 +41,18 @@ class RefreshResponse(BaseModel):
     success: bool
     message: str
     metric: MetricOut | None = None
+
+
+class RefreshDispatchResponse(BaseModel):
+    """Returned when a manual refresh is queued as a Celery task."""
+    task_id: str
+    status: str
+    message: str
+
+
+class TaskStatusResponse(BaseModel):
+    task_id: str
+    state: str            # PENDING / STARTED / SUCCESS / FAILURE / RETRY
+    ready: bool
+    successful: bool | None = None
+    result: dict | None = None

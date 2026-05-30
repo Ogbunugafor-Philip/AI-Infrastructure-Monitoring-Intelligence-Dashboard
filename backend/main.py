@@ -22,6 +22,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from config import settings
 from middleware.rate_limit import limiter
+from routers import ai_reports as ai_reports_router
 from routers import auth as auth_router
 from routers import dashboard as dashboard_router
 from routers import metrics as metrics_router
@@ -37,7 +38,20 @@ async def lifespan(app: FastAPI):
     # Fail fast at startup if configuration is incomplete.
     verify_required_env()
     logger.info("Environment validation passed; starting %s", settings.APP_NAME)
+    # Start the APScheduler jobs (scan-all-servers + retention cleanup).
+    try:
+        from tasks.scheduler import start_scheduler
+
+        start_scheduler()
+    except Exception as exc:  # noqa: BLE001 - scheduler must not block startup
+        logger.error("Scheduler failed to start: %s", type(exc).__name__)
     yield
+    try:
+        from tasks.scheduler import shutdown_scheduler
+
+        shutdown_scheduler()
+    except Exception:  # noqa: BLE001
+        pass
     logger.info("Shutting down %s", settings.APP_NAME)
 
 
@@ -80,6 +94,7 @@ app.include_router(auth_router.router)
 app.include_router(servers_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(metrics_router.router)
+app.include_router(ai_reports_router.router)
 
 
 @app.get("/health", tags=["health"])

@@ -2,27 +2,27 @@
 Metrics router.
 
 Endpoints (under /api/v1/metrics):
-  GET  /{server_id}/latest   - most recent metric snapshot (any authenticated)
-  GET  /{server_id}/history  - time-series for the last N hours (any authenticated)
-  POST /{server_id}/refresh  - collect fresh metrics over SSH and store them
+  GET  /{server_id}/latest                  - most recent metric (any authenticated)
+  GET  /{server_id}/history                 - time-series for last N hours (any auth)
+  POST /{server_id}/refresh                 - queue a full scan via Celery (admin+)
+  GET  /{server_id}/refresh/{task_id}/status- poll Celery task status (any auth)
 
-``refresh`` decrypts the server's stored credentials, gathers real metrics via
-the SSH metrics collector, persists a new ``metrics`` row, and updates the
-server's status. Connection/credential errors degrade gracefully and mark the
-server offline. Decrypted secrets are never logged or returned.
+The manual refresh dispatches ``full_server_scan_task`` (collect metrics -> logs
+-> AI analysis) and returns a task_id for polling. Encrypted metric JSON columns
+are decrypted before being returned. Decrypted secrets are never logged.
 """
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from celery_app import celery_app
 from database import get_db
-from middleware.rbac import require_viewer
-from models.enums import ServerStatus
+from middleware.rbac import require_admin, require_viewer
 from models.metric import Metric
 from models.server import Server
 from models.user import User
@@ -30,13 +30,16 @@ from schemas.metric import (
     MetricHistoryPoint,
     MetricHistoryResponse,
     MetricOut,
-    RefreshResponse,
+    RefreshDispatchResponse,
+    TaskStatusResponse,
 )
-from services.metrics_service import collect_metrics
-from services.ssh_service import SSHConnectionParams
-from utils.encryption import EncryptionError, decrypt
+from services import audit_service
+from services.metric_storage import decrypt_json
+from tasks.metric_tasks import full_server_scan_task
 
 router = APIRouter(prefix="/api/v1/metrics", tags=["metrics"])
+
+MANUAL_REFRESH_EVENT = "manual_metric_refresh"
 
 
 async def _get_server_or_404(db: AsyncSession, server_id: uuid.UUID) -> Server:
@@ -46,6 +49,14 @@ async def _get_server_or_404(db: AsyncSession, server_id: uuid.UUID) -> Server:
     if server is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not found")
     return server
+
+
+def _metric_out(metric: Metric) -> MetricOut:
+    """Build a MetricOut with the encrypted JSON columns decrypted."""
+    out = MetricOut.model_validate(metric)
+    out.running_processes = decrypt_json(metric.running_processes)
+    out.open_ports = decrypt_json(metric.open_ports)
+    return out
 
 
 @router.get("/{server_id}/latest", response_model=MetricOut | None)
@@ -63,7 +74,7 @@ async def latest_metric(
             .limit(1)
         )
     ).scalar_one_or_none()
-    return MetricOut.model_validate(metric) if metric else None
+    return _metric_out(metric) if metric else None
 
 
 @router.get("/{server_id}/history", response_model=MetricHistoryResponse)
@@ -97,67 +108,53 @@ async def metric_history(
     )
 
 
-@router.post("/{server_id}/refresh", response_model=RefreshResponse)
+@router.post("/{server_id}/refresh", response_model=RefreshDispatchResponse)
 async def refresh_metrics(
+    request: Request,
     server_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_viewer),
-) -> RefreshResponse:
+    current_user: User = Depends(require_admin),  # viewer -> 403
+) -> RefreshDispatchResponse:
     server = await _get_server_or_404(db, server_id)
 
-    # Decrypt stored credentials (never logged).
-    password = key = None
-    try:
-        if server.encrypted_ssh_password:
-            password = decrypt(server.encrypted_ssh_password)
-        if server.encrypted_ssh_key:
-            key = decrypt(server.encrypted_ssh_key)
-    except EncryptionError:
-        raise HTTPException(status_code=500, detail="Stored credential could not be decrypted")
+    # Dispatch the full scan (metrics -> logs -> AI) to Celery.
+    task = full_server_scan_task.delay(str(server_id))
 
-    params = SSHConnectionParams(
-        host=server.ip_address,
-        port=server.ssh_port,
-        username=server.ssh_username,
-        auth_method=server.ssh_auth_method,
-        password=password,
-        private_key=key,
-        key_only_mode=server.ssh_key_only_mode,
-    )
-
-    try:
-        collected = await collect_metrics(params)
-    except Exception as exc:  # noqa: BLE001 - any SSH/parse failure marks offline
-        server.status = ServerStatus.offline
-        await db.commit()
-        return RefreshResponse(
-            success=False,
-            message=f"Metric collection failed ({type(exc).__name__}); server marked offline.",
-        )
-
-    metric = Metric(
-        server_id=server.id,
-        cpu_usage=collected.cpu_usage,
-        ram_usage=collected.ram_usage,
-        disk_usage=collected.disk_usage,
-        uptime=collected.uptime,
-        running_processes=collected.running_processes,
-        open_ports=collected.open_ports,
-        network_stats=collected.network_stats,
-    )
-    db.add(metric)
-
-    # Derive status from the worst resource utilisation.
-    worst = max(
-        v for v in [collected.cpu_usage or 0, collected.ram_usage or 0, collected.disk_usage or 0]
-    )
-    server.status = ServerStatus.warning if worst >= 80 else ServerStatus.online
-
-    await db.flush()
-    await db.commit()
-    await db.refresh(metric)
-    return RefreshResponse(
+    await audit_service.record_event(
+        db,
+        event_type=MANUAL_REFRESH_EVENT,
         success=True,
-        message="Metrics collected successfully.",
-        metric=MetricOut.model_validate(metric),
+        user_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+        target_server_id=server.id,
+        description=f"Manual metric refresh queued for '{server.name}' (task {task.id}).",
+    )
+    await db.commit()
+
+    return RefreshDispatchResponse(
+        task_id=task.id,
+        status="queued",
+        message="Full server scan queued. Poll the status endpoint for completion.",
+    )
+
+
+@router.get("/{server_id}/refresh/{task_id}/status", response_model=TaskStatusResponse)
+async def refresh_status(
+    server_id: uuid.UUID,
+    task_id: str,
+    current_user: User = Depends(require_viewer),
+) -> TaskStatusResponse:
+    result = celery_app.AsyncResult(task_id)
+    payload = None
+    if result.successful():
+        try:
+            payload = result.result if isinstance(result.result, dict) else {"value": str(result.result)}
+        except Exception:  # noqa: BLE001
+            payload = None
+    return TaskStatusResponse(
+        task_id=task_id,
+        state=result.state,
+        ready=result.ready(),
+        successful=result.successful() if result.ready() else None,
+        result=payload,
     )

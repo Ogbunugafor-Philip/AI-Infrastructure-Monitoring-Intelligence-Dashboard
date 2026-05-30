@@ -147,6 +147,33 @@ async def test_connection(params: SSHConnectionParams) -> ConnectionResult:
     return await asyncio.to_thread(_run_test, params)
 
 
+def build_params_from_server(server) -> SSHConnectionParams:
+    """Decrypt a Server's stored credentials into SSHConnectionParams.
+
+    Decrypted secrets live only in the returned object and are never logged.
+    """
+    from utils.encryption import EncryptionError, decrypt  # local import avoids cycle
+
+    password = key = None
+    try:
+        if server.encrypted_ssh_password:
+            password = decrypt(server.encrypted_ssh_password)
+        if server.encrypted_ssh_key:
+            key = decrypt(server.encrypted_ssh_key)
+    except EncryptionError as exc:
+        raise RuntimeError("Failed to decrypt SSH credentials") from exc
+
+    return SSHConnectionParams(
+        host=server.ip_address,
+        port=server.ssh_port,
+        username=server.ssh_username,
+        auth_method=server.ssh_auth_method,
+        password=password,
+        private_key=key,
+        key_only_mode=server.ssh_key_only_mode,
+    )
+
+
 @contextlib.contextmanager
 def open_ssh_client(params: SSHConnectionParams) -> Iterator[paramiko.SSHClient]:
     """

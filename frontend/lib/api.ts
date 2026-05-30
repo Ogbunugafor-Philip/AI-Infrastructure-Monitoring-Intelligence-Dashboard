@@ -361,10 +361,81 @@ export async function getMetricHistory(serverId: string, hours = 24): Promise<Me
   return data;
 }
 
-export async function refreshMetrics(
+// --- Async (Celery) refresh + AI reports ---
+export interface RefreshDispatch {
+  task_id: string;
+  status: string;
+  message: string;
+}
+
+export interface TaskStatus {
+  task_id: string;
+  state: string;
+  ready: boolean;
+  successful: boolean | null;
+  result: Record<string, unknown> | null;
+}
+
+export interface AiReport {
+  id: string;
+  server_id: string;
+  summary: string | null;
+  risk_score: number | null;
+  risk_level: string | null;
+  key_findings: string[] | null;
+  recommended_actions: string[] | null;
+  security_observations: string[] | null;
+  performance_observations: string[] | null;
+  report_type: string;
+  generated_at: string;
+}
+
+export interface AiReportHistory {
+  items: { id: string; risk_score: number | null; risk_level: string | null; report_type: string; generated_at: string }[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+/** Queue a full server scan (metrics -> logs -> AI). Returns a task_id to poll. */
+export async function refreshMetrics(serverId: string): Promise<RefreshDispatch> {
+  const { data } = await api.post<RefreshDispatch>(`/metrics/${serverId}/refresh`, {});
+  return data;
+}
+
+export async function getRefreshStatus(serverId: string, taskId: string): Promise<TaskStatus> {
+  const { data } = await api.get<TaskStatus>(`/metrics/${serverId}/refresh/${taskId}/status`);
+  return data;
+}
+
+/** Poll a Celery task to completion (every 3s, bounded). Resolves on ready. */
+export async function waitForTask(
   serverId: string,
-): Promise<{ success: boolean; message: string; metric: Metric | null }> {
-  const { data } = await api.post(`/metrics/${serverId}/refresh`, {});
+  taskId: string,
+  { intervalMs = 3000, timeoutMs = 120000 }: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<TaskStatus> {
+  const start = Date.now();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const status = await getRefreshStatus(serverId, taskId);
+    if (status.ready || Date.now() - start > timeoutMs) return status;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+export async function getLatestAiReport(serverId: string): Promise<AiReport | null> {
+  const { data } = await api.get<AiReport | null>(`/ai-reports/${serverId}/latest`);
+  return data;
+}
+
+export async function getAiReportHistory(serverId: string, page = 1): Promise<AiReportHistory> {
+  const { data } = await api.get<AiReportHistory>(`/ai-reports/${serverId}/history?page=${page}`);
+  return data;
+}
+
+export async function generateAiReport(serverId: string): Promise<RefreshDispatch> {
+  const { data } = await api.post<RefreshDispatch>(`/ai-reports/${serverId}/generate`, {});
   return data;
 }
 

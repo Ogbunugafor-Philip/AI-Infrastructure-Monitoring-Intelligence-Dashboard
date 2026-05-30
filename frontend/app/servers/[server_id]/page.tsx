@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   ArrowDownUp,
   ArrowLeft,
-  BrainCircuit,
   Clock,
   Cpu,
   Network,
@@ -21,8 +20,10 @@ import {
   getMetricHistory,
   getServer,
   refreshMetrics,
+  waitForTask,
 } from "@/lib/api";
 import { withAuth } from "@/lib/withAuth";
+import { AIReportPanel } from "@/components/AIReportPanel";
 import { timeAgo, formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -83,8 +84,9 @@ function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }
   async function handleRefresh() {
     setRefreshing(true);
     try {
-      const res = await refreshMetrics(server_id);
-      if (res.metric) setMetric(res.metric);
+      // Queue a full scan (metrics -> logs -> AI) and wait for completion.
+      const { task_id } = await refreshMetrics(server_id);
+      await waitForTask(server_id, task_id, { timeoutMs: 120000 });
       await load();
     } finally {
       setRefreshing(false);
@@ -288,19 +290,7 @@ function ServerDetailPage({ params }: { params: Promise<{ server_id: string }> }
           )}
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-semibold"><BrainCircuit className="h-5 w-5 text-indigo-400" /> AI Analysis</h2>
-            <Button variant="outline" size="sm" disabled title="AI report generation arrives in a later phase">
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh AI Analysis
-            </Button>
-          </div>
-          <EmptyState
-            title="No AI analysis yet"
-            description="AI-generated risk reports and recommendations will appear here once generated."
-            icon={<BrainCircuit className="h-6 w-6" />}
-          />
-        </section>
+        <AIReportPanel serverId={server_id} />
       </div>
     </div>
   );
