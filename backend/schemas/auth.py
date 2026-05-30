@@ -13,6 +13,11 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class PasswordVerifyRequest(BaseModel):
+    """Re-verify the authenticated user's own dashboard password."""
+    password: str = Field(min_length=1, max_length=256)
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1)
 

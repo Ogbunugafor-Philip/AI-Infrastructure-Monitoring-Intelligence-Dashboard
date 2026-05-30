@@ -27,12 +27,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from middleware.rate_limit import LOGIN_RATE_LIMIT, limiter
+from middleware.rbac import get_current_user
 from models.refresh_token import RefreshToken
 from models.user import User
 from schemas.auth import (
     LoginRequest,
     LogoutRequest,
     MessageResponse,
+    PasswordVerifyRequest,
     RefreshRequest,
     TokenResponse,
 )
@@ -174,6 +176,32 @@ async def refresh(
         description="Refresh token rotated.",
     )
     return await _issue_token_pair(db, user)
+
+
+@router.post("/verify-password", response_model=MessageResponse)
+async def verify_current_password(
+    request: Request,
+    payload: PasswordVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MessageResponse:
+    """
+    Re-verify the authenticated user's own dashboard password.
+
+    Used by the frontend as a confirmation gate before revealing sensitive
+    fields (e.g. an SSH key being entered on the registration form).
+    """
+    ip = _client_ip(request)
+    if not verify_password(payload.password, current_user.hashed_password):
+        await audit_service.record_event(
+            db, event_type="password_reverify", success=False, user_id=current_user.id,
+            ip_address=ip, description="Dashboard password re-verification failed.",
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Password verification failed"
+        )
+    return MessageResponse(message="verified")
 
 
 @router.post("/logout", response_model=MessageResponse)
