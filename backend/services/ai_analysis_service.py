@@ -10,6 +10,7 @@ AES-256-GCM encrypted. The unencrypted prompt / raw data is never persisted.
 from __future__ import annotations
 
 import ast
+import re
 import asyncio
 import json
 import logging
@@ -95,36 +96,77 @@ def _call_cerebras(prompt: str) -> str:
     return resp.json()["choices"][0]["message"]["content"]
 
 
+_LIST_FIELDS = (
+    "key_findings", "recommended_actions",
+    "security_observations", "performance_observations",
+)
+
+_PARSE_ERROR_REPORT = {
+    "summary": "AI analysis could not be parsed. Raw response stored.",
+    "risk_score": 5,
+    "risk_level": "warning",
+    "key_findings": [],
+    "recommended_actions": [],
+    "security_observations": [],
+    "performance_observations": [],
+}
+
+
+def _normalize_report(data: dict) -> dict:
+    """Guarantee a complete, well-typed report dict (lists for list fields)."""
+    out = {
+        "summary": str(data.get("summary") or "").strip() or "No summary provided.",
+        "risk_score": data.get("risk_score", 5),
+        "risk_level": data.get("risk_level") or "warning",
+    }
+    for field in _LIST_FIELDS:
+        value = data.get(field)
+        if isinstance(value, list):
+            out[field] = [str(v) for v in value]
+        elif value in (None, ""):
+            out[field] = []
+        else:
+            out[field] = [str(value)]
+    return out
+
+
 def _coerce_report(content: str) -> dict:
-    """Parse the model output into a normalized report dict (safe fallback)."""
-    text = content.strip()
-    # Strip markdown fences if present.
+    """
+    Parse the model output into a normalized report dict.
+
+    Strips markdown fences and whitespace, tries strict JSON, then a
+    single-quote→double-quote pass, then ast.literal_eval (Python-dict format).
+    If everything fails, returns a structured error object — NEVER the raw text.
+    """
+    text = (content or "").strip()
+    # Strip markdown code fences (```json ... ```).
     if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-    # Models sometimes emit single-quoted JSON; try strict first, then a lenient pass.
-    candidates = [text]
+        text = re.sub(r"^```[a-zA-Z0-9]*\s*", "", text)
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+    # Narrow to the outermost {...} block when possible.
     start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1:
-        candidates.append(text[start : end + 1])
+    block = text[start : end + 1] if start != -1 and end != -1 else text
+
+    candidates = [block, text, block.replace("'", '"')]
     for cand in candidates:
-        # Strict JSON first.
         try:
             data = json.loads(cand)
             if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
+                return _normalize_report(data)
+        except (json.JSONDecodeError, TypeError):
             pass
-        # Single-quoted JSON is a Python dict literal — ast.literal_eval handles it.
         try:
             data = ast.literal_eval(cand)
             if isinstance(data, dict):
-                return data
-        except (ValueError, SyntaxError):
+                return _normalize_report(data)
+        except (ValueError, SyntaxError, TypeError):
             pass
-    # Could not parse: store raw text as summary, risk 5.
-    return {"summary": content[:4000], "risk_score": 5, "risk_level": "warning"}
+
+    # Structured error — a proper dict, never a raw JSON string in `summary`.
+    return dict(_PARSE_ERROR_REPORT)
 
 
 def _clamp_risk(value) -> int:
