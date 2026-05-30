@@ -307,6 +307,23 @@ AI_Infra_Monitoring/
     └── backup_ai_infra_db.sh
 ```
 
+### Database Schema
+
+Ten tables (plus Alembic's `alembic_version`), all with **row-level security** enabled:
+
+| Table | Purpose | Notable columns |
+|---|---|---|
+| `users` | Dashboard accounts | `email`, `hashed_password` (Argon2), `role`, `is_locked`, `failed_login_attempts`, `force_password_change` |
+| `servers` | Registered monitored servers | `ip_address`, `ssh_auth_method`, `encrypted_ssh_password`, `encrypted_ssh_key`, `ssh_key_only_mode`, `allowed_ip_whitelist`, `status` |
+| `metrics` | Collected metric snapshots | `cpu_usage`, `ram_usage`, `disk_usage`, `uptime`, `running_processes` (encrypted), `open_ports` (encrypted), `network_stats`, `collected_at` |
+| `logs` | Collected server logs | `log_source`, `log_level`, `raw_line` (encrypted), `parsed_timestamp` |
+| `ai_reports` | AI analysis reports | `summary`, `risk_score`, `risk_level`, `key_findings`, `recommended_actions`, `security_observations`, `performance_observations`, `raw_data_snapshot` (encrypted) |
+| `audit_logs` | Immutable audit trail | `event_type`, `event_description`, `ip_address`, `user_id`, `target_server_id`, `success`, `created_at` |
+| `refresh_tokens` | Issued refresh tokens | `token_hash` (SHA-256), `expires_at`, `revoked` |
+| `rate_limit_tracking` | Persistent rate-limit/lockout | `ip_address`, `endpoint`, `attempt_count`, `window_start`, `blocked_until` |
+| `pending_actions` | Action lifecycle | `command_key`, `command_string`, `risk_level`, `status`, `password_verified`, `second_confirmation_required`, `time_lock_expires_at`, `execution_output` |
+| `security_scans` | Vulnerability scan results | `scan_results` (JSON), `total_checks`, `passed`, `warnings`, `critical_findings`, `overall_score` |
+
 ---
 
 ## ✅ 5. Prerequisites
@@ -516,6 +533,24 @@ journalctl -u ai-infra-celery -n 100 --no-pager
 journalctl -u ai-infra-frontend -f
 ```
 
+### Scheduled background jobs
+
+APScheduler (started in the FastAPI lifespan, dispatch deduplicated by a Redis lock so only one worker fires each job) enqueues these Celery tasks:
+
+| Job | Schedule | Task | What it does |
+|---|---|---|---|
+| Scan all servers | every `SCHEDULER_REPORT_INTERVAL_HOURS` (24h) | `scan_all_servers` | For each server: collect metrics → collect logs → AI analysis → email report |
+| Retention cleanup | daily at **03:00 UTC** | `run_retention_cleanup` | Delete metrics/logs/AI reports past their retention windows |
+| Expire pending actions | every **60 seconds** | `expire_pending_actions` | Mark stale `pending` / `awaiting_second_confirmation` actions as `expired` |
+
+The **manual refresh** button and **Generate Report** button enqueue the same per-server pipeline on demand (`full_server_scan` / `analyze_server`), returning a `task_id` the frontend polls for completion.
+
+### Certbot SSL auto-renewal
+```bash
+systemctl status certbot.timer      # active + enabled
+sudo certbot renew --dry-run        # verify renewal works
+```
+
 ---
 
 ## 🛡️ 9. Security Architecture
@@ -700,6 +735,10 @@ openssl enc -d -aes-256-cbc -pbkdf2 \
 | **Nginx 502 Bad Gateway** | Backend/frontend not running or wrong upstream port. `systemctl restart ai-infra-backend ai-infra-frontend`; confirm 8002/3001 are listening (`ss -tlnp`). |
 | **"Invalid email or password" on a correct password** | Email is matched case-insensitively now; clear any autofilled old value. After 3 failed tries the IP is temporarily blocked (intrusion lock, ~10 min). |
 | **"Too many attempts"** | Rate limit / intrusion lock. Wait for the window to elapse or clear it. |
+| **Session logs out too quickly** | Tune `SESSION_INACTIVITY_TIMEOUT_MINUTES`; a warning modal appears 2 minutes before expiry with a "Stay Logged In" button. |
+| **Migrations fail on `alembic upgrade`** | Ensure the DB role owns the database and `DATABASE_*` vars are correct; the app derives the async URL from the discrete parts (not the raw `DATABASE_URL`). |
+| **Charts show a single dot** | Only one metric sample exists yet — the area chart auto-extends a flat line across the 24h window. Collect more samples (refresh or wait for the schedule). |
+| **Health endpoint reports `degraded`** | `database` or `redis` is unreachable. Check `systemctl status postgresql redis-server` and the corresponding `.env` settings. |
 
 ---
 
