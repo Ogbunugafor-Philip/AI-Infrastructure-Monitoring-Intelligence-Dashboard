@@ -26,7 +26,9 @@ PER_COMMAND_TIMEOUT = 10  # seconds; a slow command cannot block the whole run
 
 # Exact commands as specified.
 COMMANDS = {
-    "cpu": 'top -bn1 | grep "Cpu(s)" | awk \'{print $2}\' | cut -d. -f1',
+    # Read CPU usage directly from the kernel proc filesystem (accurate, locale-
+    # independent). Returns a float with one decimal place, e.g. "6.2".
+    "cpu": "grep 'cpu ' /proc/stat | awk '{idle=$5; total=$2+$3+$4+$5+$6+$7+$8; usage=100-(idle*100/total); printf \"%.1f\", usage}'",
     "ram": "free -m | awk 'NR==2{printf \"%.1f\", $3*100/$2}'",
     "disk": "df -h | awk 'NR>1 {print $1, $2, $3, $4, $5, $6}'",
     "uptime": "uptime -p",
