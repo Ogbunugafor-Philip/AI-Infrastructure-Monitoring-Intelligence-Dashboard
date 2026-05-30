@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 import re
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -91,8 +91,11 @@ async def login(
             detail="Too many failed attempts from this IP. Try again later.",
         )
 
+    # Case-insensitive email match (avoids failures from mobile auto-capitalize).
     user = (
-        await db.execute(select(User).where(User.email == payload.email))
+        await db.execute(
+            select(User).where(func.lower(User.email) == payload.email.strip().lower())
+        )
     ).scalar_one_or_none()
 
     # Constant-effort verification regardless of whether the user exists.

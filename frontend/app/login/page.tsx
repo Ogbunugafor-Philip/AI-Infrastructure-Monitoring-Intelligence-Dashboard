@@ -22,7 +22,8 @@ function LoginForm() {
     setError(null);
     setLoading(true);
     try {
-      const tokens = await login(email, password);
+      // Normalize email (mobile keyboards often auto-capitalize the first letter).
+      const tokens = await login(email.trim().toLowerCase(), password);
       Cookies.set("access_token", tokens.access_token, {
         secure: true,
         sameSite: "strict",
@@ -86,6 +87,9 @@ function LoginForm() {
                 type="email"
                 required
                 autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className={inputClass}
