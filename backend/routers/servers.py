@@ -38,7 +38,7 @@ from models.pending_action import PendingAction
 from models.server import Server
 from models.user import User
 from schemas.action import EmergencyKillResponse, PasswordBody
-from services import action_email_service, connection_registry
+from services import action_email_service, connection_registry, forensic_email_service
 from schemas.server import (
     MessageResponse,
     RevealCredentialsRequest,
@@ -148,16 +148,11 @@ async def register_server(
     await db.commit()
     await db.refresh(server)
 
-    # Notify operators of the new server registration.
-    await send_email(
-        subject="[AI Infra Monitoring] New server registered",
-        body=(
-            "A new server was registered on the AI Infrastructure Monitoring Dashboard.\n\n"
-            f"Name: {server.name}\n"
-            f"IP address: {server.ip_address}\n"
-            f"Registered by: {current_user.email}\n"
-            f"Timestamp: {datetime.now(timezone.utc).isoformat()}\n"
-        ),
+    # Notify operators of the new server registration (HTML).
+    await action_email_service.notify_server_registered(
+        server=server,
+        registered_by=current_user.email,
+        auth_method=server.ssh_auth_method.value,
     )
     return ServerOut.from_model(server)
 
@@ -493,7 +488,7 @@ async def emergency_kill(
     )
     await db.commit()
 
-    await action_email_service.notify_emergency_kill(
+    await forensic_email_service.send_emergency_kill_forensic(
         triggered_by=current_user.email, server=server, cancelled_actions=actions_cancelled,
     )
 
