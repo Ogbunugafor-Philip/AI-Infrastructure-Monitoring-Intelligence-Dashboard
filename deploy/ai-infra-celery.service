@@ -1,15 +1,23 @@
 [Unit]
-Description=AI Infra Monitoring Celery Worker
-After=network.target redis-server.service postgresql.service
+Description=AI Infrastructure Monitoring Dashboard - Celery Worker
+After=network.target redis.service postgresql.service
+Wants=redis.service postgresql.service
 
 [Service]
 Type=simple
 User=root
+Group=root
 WorkingDirectory=/root/projects/AI_Infra_Monitoring/backend
 EnvironmentFile=/root/projects/AI_Infra_Monitoring/.env
 ExecStart=/root/projects/AI_Infra_Monitoring/backend/venv/bin/celery -A celery_app worker --loglevel=info --concurrency=4
+ExecReload=/bin/kill -s HUP $MAINPID
 Restart=always
-RestartSec=10
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-infra-celery
+TimeoutStartSec=60
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target

@@ -102,8 +102,41 @@ app.include_router(actions_router.router)
 @app.get("/health", tags=["health"])
 @limiter.exempt
 async def health() -> dict:
-    """Lightweight liveness probe (used by uptime monitoring)."""
-    return {"status": "ok", "app": settings.APP_NAME, "env": settings.APP_ENV}
+    """Health probe (no auth) — reports DB & Redis connectivity."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from database import engine
+
+    database_status = "connected"
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:  # noqa: BLE001
+        database_status = "error"
+
+    redis_status = "connected"
+    try:
+        import redis.asyncio as aioredis
+
+        client = aioredis.Redis(
+            host=settings.REDIS_HOST, port=settings.REDIS_PORT,
+            db=settings.REDIS_DB, socket_connect_timeout=2, socket_timeout=2,
+        )
+        await client.ping()
+        await client.aclose()
+    except Exception:  # noqa: BLE001
+        redis_status = "error"
+
+    overall = "healthy" if database_status == "connected" and redis_status == "connected" else "degraded"
+    return {
+        "status": overall,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "database": database_status,
+        "redis": redis_status,
+        "version": "1.0.0",
+    }
 
 
 @app.get("/", tags=["health"])

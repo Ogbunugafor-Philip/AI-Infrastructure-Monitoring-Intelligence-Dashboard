@@ -1,0 +1,25 @@
+[Unit]
+Description=AI Infrastructure Monitoring Dashboard - Next.js Frontend
+After=network.target ai-infra-backend.service
+Wants=ai-infra-backend.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/projects/AI_Infra_Monitoring/frontend
+EnvironmentFile=/root/projects/AI_Infra_Monitoring/.env
+ExecStart=/usr/bin/npm start
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-infra-frontend
+TimeoutStartSec=120
+TimeoutStopSec=30
+Environment=NODE_ENV=production
+Environment=PORT=3001
+
+[Install]
+WantedBy=multi-user.target

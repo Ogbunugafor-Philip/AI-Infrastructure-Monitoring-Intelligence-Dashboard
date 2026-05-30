@@ -16,6 +16,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+import redis
+
 from config import settings
 from tasks.action_tasks import expire_pending_actions_task
 from tasks.metric_tasks import run_retention_cleanup_task, scan_all_servers_task
@@ -24,19 +26,37 @@ logger = logging.getLogger("ai_infra.scheduler")
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
+# The backend runs with multiple uvicorn workers, so the scheduler starts in
+# EACH worker. A short Redis lock per job-window ensures only ONE worker
+# actually dispatches each interval (fail-open if Redis is unreachable).
+_redis_lock_client = redis.Redis(
+    host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB,
+    socket_connect_timeout=2, socket_timeout=2,
+)
+
+
+def _claim(job: str, ttl_seconds: int) -> bool:
+    try:
+        return bool(_redis_lock_client.set(f"scheduler:lock:{job}", "1", nx=True, ex=ttl_seconds))
+    except Exception:  # noqa: BLE001 - if Redis is down, allow (single-worker dev)
+        return True
+
 
 def _dispatch_scan_all() -> None:
-    scan_all_servers_task.delay()
-    logger.info("Dispatched scheduled scan_all_servers task")
+    if _claim("scan_all_servers", 3600):
+        scan_all_servers_task.delay()
+        logger.info("Dispatched scheduled scan_all_servers task")
 
 
 def _dispatch_retention() -> None:
-    run_retention_cleanup_task.delay()
-    logger.info("Dispatched scheduled retention cleanup task")
+    if _claim("retention_cleanup", 3600):
+        run_retention_cleanup_task.delay()
+        logger.info("Dispatched scheduled retention cleanup task")
 
 
 def _dispatch_expire_actions() -> None:
-    expire_pending_actions_task.delay()
+    if _claim("expire_pending_actions", 55):
+        expire_pending_actions_task.delay()
 
 
 def start_scheduler() -> None:

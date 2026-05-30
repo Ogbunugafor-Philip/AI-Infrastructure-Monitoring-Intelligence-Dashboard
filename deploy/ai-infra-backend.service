@@ -1,0 +1,23 @@
+[Unit]
+Description=AI Infrastructure Monitoring Dashboard - FastAPI Backend
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/projects/AI_Infra_Monitoring/backend
+EnvironmentFile=/root/projects/AI_Infra_Monitoring/.env
+ExecStart=/root/projects/AI_Infra_Monitoring/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8002 --workers 4 --log-level info
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-infra-backend
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
